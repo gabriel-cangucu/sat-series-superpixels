@@ -1,0 +1,29 @@
+model:
+  name: "cdspixel_net"
+  patch_size: 256
+  crop_size: 208
+  num_channels: 4
+  num_timestamps: 1
+
+dataset:
+  name: "ibge_labeled"
+  validate: True
+  batch_size: 16
+  num_workers: 4
+  data_dir: "/pgeoprj2/godeep/ewab/datasets/IBGE_dataset_labeled"
+  fold: 5
+
+solver:
+  name: "adam"
+  learning_rate: 1e-4
+  weight_decay: 4e-4
+  max_epochs: 300
+  dev_run: False # Set to True for a quick test run
+  overfit_batches: False # Set to true to overfit one batch of the data
+
+checkpoint:
+  save_dir: "/pgeoprj2/godeep/ewab/experiments/superpixels_benchmark"
+  run_name: "cdspixel_fold_5"
+  pretrain_weights:
+  ckpt_path:
+  save_checkpoint: True
