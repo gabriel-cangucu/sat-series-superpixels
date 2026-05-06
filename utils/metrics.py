@@ -5,12 +5,12 @@ from torchmetrics import Metric
 
 def _compute_boundary_map(seg: torch.Tensor) -> torch.Tensor:
     """
-    Returns binary boundary map (H, W)
+    Returns a binary boundary map.
     """
     boundary = torch.zeros_like(seg, dtype=torch.bool)
 
-    boundary[:, :-1] |= (seg[:, :-1] != seg[:, 1:])
-    boundary[:-1, :] |= (seg[:-1, :] != seg[1:, :])
+    boundary[:, :, :-1] |= (seg[:, :, :-1] != seg[:, :, 1:])
+    boundary[:, :-1, :] |= (seg[:, :-1, :] != seg[:, 1:, :])
 
     return boundary
 
@@ -21,13 +21,13 @@ def _dilate(boundary: torch.Tensor, radius: int) -> torch.Tensor:
     """
     if radius <= 0:
         return boundary
-
-    boundary = boundary.float().unsqueeze(0)  # (1,1,H,W)
+    
+    boundary = boundary.float()
 
     kernel_size = 2 * radius + 1
     dilated = F.max_pool2d(boundary, kernel_size=kernel_size, stride=1, padding=radius)
 
-    return dilated.squeeze(0).squeeze(0).bool()
+    return dilated.squeeze(1).bool()
 
 
 class BoundaryPrecision(Metric):
@@ -39,32 +39,31 @@ class BoundaryPrecision(Metric):
         self.add_state("total", default=torch.tensor(0.), dist_reduce_fx="sum")
     
     def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
-        B = preds.shape[0]
+        """
+        Expects preds and target to be of shape (B, H, W) or (B, 1, H, W)
+        """
+        preds = preds.squeeze()
+        target = target.squeeze()
 
-        for b in range(B):
-            val = self._boundary_precision(preds[b], target[b]).cpu()
+        sp_boundary = _compute_boundary_map(preds)
+        gt_boundary = _compute_boundary_map(target)
 
-            self.sum_score += val
-            self.total += 1
+        gt_dilated = _dilate(gt_boundary, self.radius)    
+
+        true_positive = (sp_boundary & gt_dilated).sum(dim=(1, 2)).float()
+        predicted_positive = sp_boundary.sum(dim=(1, 2)).float()
+
+        precision = torch.where(
+            predicted_positive > 0,
+            true_positive / predicted_positive,
+            torch.zeros_like(true_positive) 
+        )
+
+        self.sum_score += precision.sum()
+        self.total += preds.shape[0]
     
     def compute(self) -> torch.Tensor:
         return self.sum_score / self.total
-
-    def _boundary_precision(self, superpixel: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        assert superpixel.shape == target.shape
-
-        sp_boundary = _compute_boundary_map(superpixel)
-        gt_boundary = _compute_boundary_map(target)
-
-        gt_dilated = _dilate(gt_boundary, self.radius)
-
-        true_positive = (sp_boundary & gt_dilated).sum()
-        predicted_positive = sp_boundary.sum()
-
-        if predicted_positive == 0:
-            return torch.tensor(0.0, device=superpixel.device)
-
-        return true_positive.float() / predicted_positive.float()
 
 
 class BoundaryRecall(Metric):
@@ -76,30 +75,31 @@ class BoundaryRecall(Metric):
         self.add_state("total", default=torch.tensor(0.), dist_reduce_fx="sum")
     
     def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
-        B = preds.shape[0]
+        """
+        Expects preds and target to be of shape (B, H, W) or (B, 1, H, W)
+        """
+        preds = preds.squeeze()
+        target = target.squeeze()
 
-        for b in range(B):
-            val = self._boundary_recall(preds[b], target[b]).cpu()
+        sp_boundary = _compute_boundary_map(preds)
+        gt_boundary = _compute_boundary_map(target)
 
-            self.sum_score += val
-            self.total += 1
+        sp_dilated = _dilate(sp_boundary, self.radius)    
+
+        true_positive = (gt_boundary & sp_dilated).sum(dim=(1, 2)).float()
+        predicted_positive = gt_boundary.sum(dim=(1, 2)).float()
+
+        precision = torch.where(
+            predicted_positive > 0,
+            true_positive / predicted_positive,
+            torch.zeros_like(true_positive) 
+        )
+
+        self.sum_score += precision.sum()
+        self.total += preds.shape[0]
     
     def compute(self) -> torch.Tensor:
         return self.sum_score / self.total
-
-    def _boundary_recall(self, superpixel: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        sp_boundary = _compute_boundary_map(superpixel)
-        gt_boundary = _compute_boundary_map(target)
-
-        sp_dilated = _dilate(sp_boundary, self.radius)
-
-        true_positive = (gt_boundary & sp_dilated).sum()
-        actual_positive = gt_boundary.sum()
-
-        if actual_positive == 0:
-            return torch.tensor(0.0, device=superpixel.device)
-
-        return true_positive.float() / actual_positive.float()
 
 
 class AchievableSegmentationAccuracy(Metric):
@@ -110,35 +110,42 @@ class AchievableSegmentationAccuracy(Metric):
         self.add_state("total", default=torch.tensor(0.), dist_reduce_fx="sum")
     
     def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
-        B = preds.shape[0]
+        """
+        Expects preds and target to be of shape (B, H, W) or (B, 1, H, W)
+        """
+        preds = preds.squeeze()
+        target = target.squeeze()
 
-        for b in range(B):
-            val = self._achievable_segmentation_accuracy(preds[b], target[b]).cpu()
+        B, H, W = preds.shape
+        N = H * W
+        
+        preds_u, preds_dense = torch.unique(preds, return_inverse=True)
+        target_u, target_dense = torch.unique(target, return_inverse=True)
+        
+        max_p = preds_u.numel()
+        max_t = target_u.numel()
+        
+        P = preds_dense.view(B, N)
+        T = target_dense.view(B, N)
+        
+        batch_offsets = torch.arange(B, device=preds.device).view(B, 1) * max_p
+        P_shifted = P + batch_offsets
+        
+        hash_idx = P_shifted * max_t + T
+        
+        counts = torch.bincount(hash_idx.view(-1), minlength=B * max_p * max_t)
+        counts = counts.view(B, max_p, max_t)
+        
+        max_overlaps = counts.max(dim=2).values  # Shape: (B, max_p)
+        correct_per_image = max_overlaps.sum(dim=1)  # Shape: (B,)
+        
+        asa_per_image = correct_per_image.float() / N
 
-            self.sum_score += val
-            self.total += 1
+        self.sum_score += asa_per_image.sum()
+        self.total += B
     
     def compute(self) -> torch.Tensor:
         return self.sum_score / self.total
-
-    def _achievable_segmentation_accuracy(self, superpixel: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        assert superpixel.shape == target.shape
-        
-        superpixel_flat = superpixel.view(-1)
-        target_flat = target.view(-1)
-
-        superpixel_ids = torch.unique(superpixel_flat)
-
-        total = 0
-        for sp_id in superpixel_ids:
-            mask = (superpixel_flat == sp_id)
-            gt_labels = target_flat[mask]
-
-            counts = torch.bincount(gt_labels)
-            if counts.numel() > 0:
-                total += counts.max()
-
-        return total.float() / superpixel_flat.numel()
 
 
 class UndersegmentationError(Metric):
@@ -149,37 +156,42 @@ class UndersegmentationError(Metric):
         self.add_state("total", default=torch.tensor(0.), dist_reduce_fx="sum")
     
     def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
-        B = preds.shape[0]
+        """
+        Expects preds and target to be of shape (B, H, W) or (B, 1, H, W)
+        """
+        preds = preds.squeeze()
+        target = target.squeeze()
 
-        for b in range(B):
-            val = self._undersegmentation_error(preds[b], target[b]).cpu()
+        B, H, W = preds.shape
+        N = H * W
+        
+        preds_u, preds_dense = torch.unique(preds, return_inverse=True)
+        target_u, target_dense = torch.unique(target, return_inverse=True)
+        
+        max_p = preds_u.numel()
+        max_t = target_u.numel()
 
-            self.sum_error += val
-            self.total += 1
+        P = preds_dense.view(B, N)
+        T = target_dense.view(B, N)
+        
+        batch_offsets = torch.arange(B, device=preds.device).view(B, 1) * max_p
+        P_shifted = P + batch_offsets
+        
+        hash_idx = P_shifted * max_t + T
+        
+        counts = torch.bincount(hash_idx.view(-1), minlength=B * max_p * max_t)
+        counts = counts.view(B, max_p, max_t)
+        
+        s_size = counts.sum(dim=2, keepdim=True)  # Shape: (B, max_p, 1)
+
+        errors = torch.minimum(counts, s_size - counts)
+        error_per_image = errors.sum(dim=(1, 2))  # Shape: (B,)
+        
+        ue_per_image = error_per_image.float() / N
+
+        self.sum_error += ue_per_image.sum()
+        self.total += B
     
     def compute(self) -> torch.Tensor:
         return self.sum_error / self.total
 
-    def _undersegmentation_error(self, superpixel: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        assert superpixel.shape == target.shape
-        
-        superpixel_flat = superpixel.view(-1)
-        target_flat = target.view(-1)
-
-        superpixel_ids = torch.unique(superpixel_flat)
-        total_error = torch.tensor(0., device=superpixel.device)
-        
-        for sp_id in superpixel_ids:
-            mask = (superpixel_flat == sp_id)
-            gt_labels = target_flat[mask]
-
-            counts = torch.bincount(gt_labels)
-            counts = counts[counts > 0]
-            
-            if counts.numel() > 0:
-                s_size = mask.sum()
-
-                error = torch.minimum(counts, s_size - counts).sum()
-                total_error += error
-
-        return total_error.float() / superpixel_flat.numel()

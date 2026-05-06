@@ -19,7 +19,7 @@ class ToTensor:
         assert len(data.shape) == 4, "Expected a 4D array"
         
         data = rearrange(data, "t c h w -> c t h w")
-        sample["data"] = torch.from_numpy(data.copy())
+        sample["data"] = torch.from_numpy(data.copy()).float()
         
         if "target" in sample.keys():
             target = sample["target"]
@@ -29,7 +29,7 @@ class ToTensor:
         
         if self.with_datetime:
             dates = sample["dates"]
-            sample["dates"] = torch.from_numpy(dates.copy())
+            sample["dates"] = torch.from_numpy(dates.copy()).float()
         
         return sample
 

@@ -58,6 +58,9 @@ def train_and_eval(config: Any) -> None:
     ckpt_path = config.checkpoint.ckpt_path if config.checkpoint.ckpt_path else None
     trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path)
 
+    if not config.solver.dev_run:
+        trainer.test(model, ckpt_path="best")
+
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Train a deep model for superpixel segmentation of satellite series.")

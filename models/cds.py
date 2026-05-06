@@ -240,6 +240,11 @@ class CLUB(nn.Module):  # CLUB: Mutual Information Contrastive Learning Upper Bo
         return (-(mu - y_samples)**2 /logvar.exp()-logvar).sum(dim=1).mean(dim=0)
     
     def learning_loss(self, x_samples, y_samples):
+        if x_samples.ndim == 1:
+            x_samples = x_samples.unsqueeze(0)
+        if y_samples.ndim == 1:
+            y_samples = y_samples.unsqueeze(0)
+
         return -self.loglikeli(x_samples, y_samples)
 
 

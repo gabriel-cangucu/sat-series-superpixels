@@ -1,0 +1,26 @@
+name: sss-venv
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch=2.1.0
+  - torchvision
+  - pytorch-cuda=12.1
+  - cuda-toolkit
+  - gcc_linux-64=12
+  - gxx_linux-64=12
+  - pip
+  - pip:
+    - torchmetrics>=1.0.0
+    - lightning
+    - omegaconf
+    - einops
+    - setuptools<70.0.0
+    - scikit-image
+    - ninja
+    - kornia
+    - pandas
+    - wandb>=0.12.10
+    - imagecodecs

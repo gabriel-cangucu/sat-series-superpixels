@@ -6,16 +6,14 @@ from einops import rearrange
 
 from utils.metrics import AchievableSegmentationAccuracy, BoundaryPrecision, BoundaryRecall, UndersegmentationError
 from models.ssn import SSN
-from models.spixel_fcn import SpixelNet
-from models.cdspixel import CDSpixelNet, CLUB
-from models.unet import Unet
+from models.s_fcn import SpixelNet
+from models.cds import CDSpixelNet, CLUB
 
 
 MODEL_REGISTRY = {
     "ssn": SSN, 
-    "spixel_net": SpixelNet,
-    "cdspixel_net": (CDSpixelNet, CLUB),
-    "unet": Unet
+    "s-fcn": SpixelNet,
+    "cds": (CDSpixelNet, CLUB)
 }
 
 SOLVER_REGISTRY = {
@@ -48,17 +46,12 @@ class DeepSuperpixelsModule(L.LightningModule):
         )
         self.regularizer = regularizer(x_dim=32, y_dim=32) if regularizer else None
 
-        if isinstance(self.model, Unet):
-            metrics = torchmetrics.MetricCollection({
-                "iou": torchmetrics.classification.JaccardIndex(task="multiclass", num_classes=3)
-            })
-        else:
-            metrics = torchmetrics.MetricCollection({
-                "asa": AchievableSegmentationAccuracy(),
-                "bp": BoundaryPrecision(radius=5),
-                "br": BoundaryRecall(radius=5),
-                "ue": UndersegmentationError()
-            })
+        metrics = torchmetrics.MetricCollection({
+            "asa": AchievableSegmentationAccuracy(),
+            "bp": BoundaryPrecision(radius=5),
+            "br": BoundaryRecall(radius=5),
+            "ue": UndersegmentationError()
+        })
         
         self.train_metrics = metrics.clone(prefix="train/")
         self.val_metrics = metrics.clone(prefix="val/")

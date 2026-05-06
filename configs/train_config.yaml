@@ -1,5 +1,5 @@
 model:
-  name: "cdspixel_net"
+  name: "cds"
   patch_size: 256
   crop_size: 208
   num_channels: 4
@@ -11,7 +11,7 @@ dataset:
   batch_size: 16
   num_workers: 4
   data_dir: "/pgeoprj2/godeep/ewab/datasets/IBGE_dataset_labeled"
-  fold: 5
+  fold: 1
 
 solver:
   name: "adam"
@@ -23,7 +23,7 @@ solver:
 
 checkpoint:
   save_dir: "/pgeoprj2/godeep/ewab/experiments/superpixels_benchmark"
-  run_name: "cdspixel_fold_5"
+  run_name: "test"
   pretrain_weights:
   ckpt_path:
   save_checkpoint: True
